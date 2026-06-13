@@ -1,5 +1,6 @@
 import { useState, useEffect, type ReactNode, type CSSProperties } from 'react';
 import { setKey, clearKey, hasKey, keyFromEnv } from './lib/ai';
+import Board from './Board';
 
 /** localStorage 동기화 state */
 export function useLocalStorage<T>(key: string, initial: T): [T, (v: T | ((p: T) => T)) => void] {
@@ -456,9 +457,10 @@ export const ApiKeyBar = ({ color }: { color: string }) => {
   );
 };
 
-/** 앱 공통 레이아웃: 히어로 + 앱 실행 본문 + 푸터 (맨 위로 버튼) */
+/** 앱 공통 레이아웃: 히어로 + (앱 실행 / 게시판) 본문 + 푸터 (맨 위로 버튼) */
 export const AppLayout = ({ m, feature }: { m: Meta; feature: ReactNode }) => {
   const [showTop, setShowTop] = useState(false);
+  const [nav, setNav] = useState<'app' | 'board'>('app');
 
   // 스크롤하면 '맨 위로' 버튼 노출
   useEffect(() => {
@@ -471,9 +473,16 @@ export const AppLayout = ({ m, feature }: { m: Meta; feature: ReactNode }) => {
     <div className="wrap">
       <style>{UI_BOOST_CSS}</style>
       <Hero m={m} />
+      <div className="ui-stick"><nav className="tabs">
+        {([['app', '📚 동화 만들기'], ['board', '💬 게시판']] as ['app' | 'board', string][]).map(([k, l]) => (
+          <button key={k} className={`tab ${nav === k ? 'on' : ''}`} style={nav === k ? { background: m.color } : undefined} onClick={() => { setNav(k); if (window.scrollY > 220) window.scrollTo({ top: 0, behavior: 'smooth' }); }}>{l}</button>
+        ))}
+      </nav></div>
       <div className="pad" style={{ marginTop: 22 }}>
-        <div className="ui-fade">
-          <Stack>{m.ai && <ApiKeyBar color={m.color} />}{feature}</Stack>
+        <div key={nav} className="ui-fade">
+          {nav === 'app'
+            ? <Stack>{m.ai && <ApiKeyBar color={m.color} />}{feature}</Stack>
+            : <div className="ui-readable"><Board color={m.color} /></div>}
         </div>
       </div>
       <Footer />
