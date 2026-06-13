@@ -66,9 +66,6 @@ const PRESENT_PRINCIPLES: string[] = [
   '숫자·근거로 마무리 — 핵심 기능 1~2개에 집중하고, 확장 계획은 마지막에 한 줄로 언급합니다.',
 ]
 
-// 탭 전환 순서(키보드 ←/→ 이동용)
-const TAB_ORDER: TabKey[] = ['app', 'plan', 'pipeline', 'dev', 'present', 'team'];
-
 // 공통 UX 부스트 스타일(모든 앱 공유) — 스티키 탭·전환 페이드·맨 위로 버튼·읽기 폭
 const UI_BOOST_CSS = `
 .ui-stick{position:sticky;top:0;z-index:30;background:var(--bg);backdrop-filter:saturate(140%) blur(8px);box-shadow:0 1px 0 var(--border)}
@@ -459,9 +456,8 @@ export const ApiKeyBar = ({ color }: { color: string }) => {
   );
 };
 
-/** 앱 공통 레이아웃: 히어로 + 6탭 + 본문 + 푸터 (스티키 탭·전환 페이드·맨 위로·키보드 ←/→) */
+/** 앱 공통 레이아웃: 히어로 + 앱 실행 본문 + 푸터 (맨 위로 버튼) */
 export const AppLayout = ({ m, feature }: { m: Meta; feature: ReactNode }) => {
-  const [tab, setTab] = useState<TabKey>('app');
   const [showTop, setShowTop] = useState(false);
 
   // 스크롤하면 '맨 위로' 버튼 노출
@@ -471,39 +467,13 @@ export const AppLayout = ({ m, feature }: { m: Meta; feature: ReactNode }) => {
     return () => window.removeEventListener('scroll', onScroll);
   }, []);
 
-  // ←/→ 키로 탭 이동(입력 중에는 무시)
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      const el = e.target as HTMLElement | null;
-      if (el && /INPUT|TEXTAREA|SELECT/.test(el.tagName)) return;
-      if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
-      const i = TAB_ORDER.indexOf(tab);
-      setTab(TAB_ORDER[(i + (e.key === 'ArrowRight' ? 1 : TAB_ORDER.length - 1)) % TAB_ORDER.length]);
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [tab]);
-
-  const go = (t: TabKey) => { setTab(t); if (window.scrollY > 220) window.scrollTo({ top: 0, behavior: 'smooth' }); };
-
   return (
     <div className="wrap">
       <style>{UI_BOOST_CSS}</style>
       <Hero m={m} />
-      <div className="ui-stick"><Tabs tab={tab} set={go} color={m.color} /></div>
       <div className="pad" style={{ marginTop: 22 }}>
-        <div key={tab} className="ui-fade">
-          {tab === 'app'
-            ? <Stack>{m.ai && <ApiKeyBar color={m.color} />}{feature}</Stack>
-            : (
-              <div className="ui-readable">
-                {tab === 'plan' && <PlanningTab m={m} />}
-                {tab === 'pipeline' && <PipelineTab m={m} />}
-                {tab === 'dev' && <DevTab m={m} />}
-                {tab === 'present' && <PresentTab m={m} />}
-                {tab === 'team' && <TeamTab m={m} />}
-              </div>
-            )}
+        <div className="ui-fade">
+          <Stack>{m.ai && <ApiKeyBar color={m.color} />}{feature}</Stack>
         </div>
       </div>
       <Footer />
