@@ -1,0 +1,524 @@
+import { useState, useEffect, type ReactNode, type CSSProperties } from 'react';
+import { setKey, clearKey, hasKey, keyFromEnv } from './lib/ai';
+
+/** localStorage 동기화 state */
+export function useLocalStorage<T>(key: string, initial: T): [T, (v: T | ((p: T) => T)) => void] {
+  const [val, setVal] = useState<T>(() => {
+    try { const raw = localStorage.getItem(key); return raw ? (JSON.parse(raw) as T) : initial; } catch { return initial; }
+  });
+  useEffect(() => { try { localStorage.setItem(key, JSON.stringify(val)); } catch { /* quota */ } }, [key, val]);
+  return [val, setVal];
+}
+
+/** 프로젝트 메타 — 기능(앱) + 포트폴리오 콘텐츠(기획·파이프라인·개발 참고·팀) */
+export interface Meta {
+  // ── 식별/히어로 ──
+  id: number; icon: string; title: string; tagline: string; members: string[]; color: string; note?: string;
+  ai?: boolean;                                      // OpenAI 사용 앱이면 키 입력 바 표시
+
+  // ── 📋 기획 ──
+  problem: string;                                   // 문제/배경
+  targets?: string[];                                // 타깃 사용자
+  goals?: string[];                                  // 기획 목표/성공 기준
+  scenarios?: string[];                              // 사용 시나리오
+  screens?: { name: string; desc: string }[];        // 주요 화면/플로우
+  features: { icon: string; title: string; desc: string }[];
+  howto: string[];                                   // 사용 방법
+  facts: { value: string; label: string }[];         // 도메인 통계
+  info: { title: string; body: string }[];           // 도메인 지식 카드
+
+  // ── 🔧 파이프라인 ──
+  pipeline?: string[];                                // 처리 흐름(단계 요약)
+  pipelineDetail?: { step: string; detail: string }[]; // 단계별 상세
+  promptNotes?: string[];                             // 프롬프트/응답 설계 메모(AI 앱)
+
+  // ── 🛠 개발 참고 ──
+  stack: string[];                                   // 기술 스택
+  architecture?: string;                             // 아키텍처 개요(1문단)
+  structure?: { path: string; desc: string }[];      // 폴더/파일 구조
+  dataModel?: { name: string; desc: string }[];      // 상태/데이터 모델
+  techNotes?: { title: string; body: string }[];      // 기술 설계 노트
+  deploy?: string;                                   // 빌드/배포 메모
+  links?: { label: string; url: string }[];          // 참고 링크
+  guidelines?: string[];                             // 개발 가이드라인(앱별 추가 — 공통은 기본 제공)
+
+  // ── 📋 기획(범위) / 🎤 발표 ──
+  scope?: { include: string[]; exclude: string[] };  // MVP 범위(포함/제외)
+  pitch?: string[];                                  // 발표 핵심 강조 포인트
+}
+
+/** 모든 앱이 공유하는 개발 가이드라인(스택·관례) */
+const COMMON_GUIDELINES: string[] = [
+  'Vite + React 18 + TypeScript로 만들고, vite.config의 base: "./"로 GitHub Pages 하위 경로에 대응합니다.',
+  '바이브코딩 규칙 — 변경 후 항상 `npm run build`로 타입·빌드 통과를 확인하고 커밋합니다(tsconfig strict, noUnusedLocals).',
+  '비밀키(OpenAI 등)는 코드에 박지 않습니다 — .env(VITE_) 또는 앱 내 키 입력(localStorage)만 사용하고 서버로 전송하지 않습니다.',
+  '상태는 localStorage로 영속화해 백엔드 없이 동작시키고, AI는 "선택 기능"으로 두어 키가 없어도 폴백으로 완결되게 합니다.',
+  '화면 메타·콘텐츠는 src/App.tsx의 `M: Meta`에서, 공통 레이아웃·탭은 src/ui.tsx에서 관리합니다(관심사 분리).',
+  'main 브랜치 push 시 GitHub Actions(.github/workflows/deploy.yml)가 자동으로 빌드·배포합니다.',
+];
+
+/** 모든 앱이 공유하는 발표 기본 원칙 */
+const PRESENT_PRINCIPLES: string[] = [
+  '데모 먼저 — 슬라이드보다 실제 동작하는 화면을 먼저 보여줍니다.',
+  '문제 → 해결 → 임팩트 순서로 1분 안에 핵심을 전달합니다.',
+  '첫 화면은 큰 글씨로 "서비스명 + 한 줄 가치 제안", 하단에 팀명·발표일을 둡니다.',
+  '시연 안전장치 — API 키 없이도 동작하는 폴백을 켜 두면 네트워크·키 문제에도 데모가 끊기지 않습니다.',
+  '숫자·근거로 마무리 — 핵심 기능 1~2개에 집중하고, 확장 계획은 마지막에 한 줄로 언급합니다.',
+]
+
+// 탭 전환 순서(키보드 ←/→ 이동용)
+const TAB_ORDER: TabKey[] = ['app', 'plan', 'pipeline', 'dev', 'present', 'team'];
+
+// 공통 UX 부스트 스타일(모든 앱 공유) — 스티키 탭·전환 페이드·맨 위로 버튼·읽기 폭
+const UI_BOOST_CSS = `
+.ui-stick{position:sticky;top:0;z-index:30;background:var(--bg);backdrop-filter:saturate(140%) blur(8px);box-shadow:0 1px 0 var(--border)}
+.ui-fade{animation:uiFade .24s ease}
+@keyframes uiFade{from{opacity:0;transform:translateY(7px)}to{opacity:1;transform:none}}
+.ui-readable{max-width:880px;margin:0 auto}
+.ui-top{position:fixed;right:18px;bottom:18px;z-index:40;width:44px;height:44px;border:none;border-radius:50%;color:#fff;font-size:20px;font-weight:800;cursor:pointer;box-shadow:0 6px 18px rgba(0,0,0,.22);transition:transform .12s}
+.ui-top:hover{transform:translateY(-2px)}
+.ui-chip{font-size:11.5px;font-weight:700;padding:3px 10px;border-radius:999px;background:rgba(255,255,255,.22);color:#fff;white-space:nowrap}
+@media (prefers-reduced-motion: reduce){.ui-fade{animation:none}}
+`;
+
+const grad = (c: string) => `linear-gradient(135deg, ${c} 0%, ${shade(c, -22)} 100%)`;
+function shade(hex: string, p: number): string {
+  const n = parseInt(hex.replace('#', ''), 16);
+  const r = Math.max(0, Math.min(255, (n >> 16) + p));
+  const g = Math.max(0, Math.min(255, ((n >> 8) & 255) + p));
+  const b = Math.max(0, Math.min(255, (n & 255) + p));
+  return `rgb(${r},${g},${b})`;
+}
+
+/** 그라데이션 히어로 */
+export const Hero = ({ m }: { m: Meta }) => (
+  <header className="phero" style={{ background: grad(m.color) }}>
+    <div className="phero-inner">
+      <span className="phero-tag">PROJECT {String(m.id).padStart(2, '0')}{m.note ? ` · ${m.note}` : ''}</span>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 10 }}>
+        <span className="phero-ic">{m.icon}</span>
+        <h1 style={{ margin: 0 }}>{m.title}</h1>
+      </div>
+      <p style={{ marginTop: 8 }}>{m.tagline}</p>
+      <div className="phero-mem">{m.members.map((x) => <span key={x}>👤 {x}</span>)}</div>
+      {/* 한눈에 — 메타 요약 칩 */}
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 12 }}>
+        <span className="ui-chip">👥 팀원 {m.members.length}</span>
+        <span className="ui-chip">🧰 스택 {m.stack.length}</span>
+        {m.ai && <span className="ui-chip">🤖 AI 연동</span>}
+        <span className="ui-chip">💾 로컬 저장</span>
+        <span className="ui-chip">🚀 자동 배포</span>
+      </div>
+    </div>
+  </header>
+);
+
+export type TabKey = 'app' | 'plan' | 'pipeline' | 'dev' | 'present' | 'team';
+export const Tabs = ({ tab, set, color }: { tab: TabKey; set: (t: TabKey) => void; color: string }) => (
+  <nav className="tabs">
+    {([['app', '🚀 앱 실행'], ['plan', '📋 기획'], ['pipeline', '🔧 파이프라인'], ['dev', '🛠 개발 참고'], ['present', '🎤 발표'], ['team', '👥 팀']] as [TabKey, string][]).map(([k, l]) => (
+      <button key={k} className={`tab ${tab === k ? 'on' : ''}`} style={tab === k ? { background: color } : undefined} onClick={() => set(k)}>{l}</button>
+    ))}
+  </nav>
+);
+
+/** 번호 매긴 박스 리스트(목표·시나리오·사용법 공통) */
+const NumList = ({ items, color }: { items: string[]; color: string }) => (
+  <Stack gap={8}>
+    {items.map((s, i) => (
+      <div key={i} className="box" style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+        <span style={{ flexShrink: 0, width: 26, height: 26, borderRadius: '50%', background: color, color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800, fontSize: 13 }}>{i + 1}</span>
+        <span style={{ fontSize: 14.5 }}>{s}</span>
+      </div>
+    ))}
+  </Stack>
+);
+
+/** 📋 기획 탭 — 문제·타깃·목표·시나리오·화면·기능·도메인·사용법 */
+export const PlanningTab = ({ m }: { m: Meta }) => (
+  <Stack gap={22}>
+    <div className="callout" style={{ background: `${m.color}12`, border: `1px solid ${m.color}33` }}>
+      <span style={{ fontSize: 22 }}>🎯</span>
+      <div><div className="seclabel" style={{ color: m.color }}>우리가 푸는 문제</div><p style={{ margin: '4px 0 0', fontSize: 14.5, lineHeight: 1.75 }}>{m.problem}</p></div>
+    </div>
+
+    {m.facts.length > 0 && (
+      <div className="statband">{m.facts.map((f, i) => <div key={i} className="stat"><b style={{ color: m.color }}>{f.value}</b><span>{f.label}</span></div>)}</div>
+    )}
+
+    {m.targets && m.targets.length > 0 && (
+      <div>
+        <div className="seclabel" style={{ color: m.color }}>타깃 사용자</div>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 10 }}>{m.targets.map((t) => <Pill key={t} color={m.color}>{t}</Pill>)}</div>
+      </div>
+    )}
+
+    {m.goals && m.goals.length > 0 && (
+      <div>
+        <div className="seclabel" style={{ color: m.color }}>기획 목표</div>
+        <h3 className="sechead">무엇을 이루려는가</h3>
+        <div style={{ marginTop: 12 }}><NumList items={m.goals} color={m.color} /></div>
+      </div>
+    )}
+
+    {m.scenarios && m.scenarios.length > 0 && (
+      <div>
+        <div className="seclabel" style={{ color: m.color }}>사용 시나리오</div>
+        <h3 className="sechead">이렇게 쓰입니다</h3>
+        <div style={{ marginTop: 12 }}><NumList items={m.scenarios} color={m.color} /></div>
+      </div>
+    )}
+
+    {m.screens && m.screens.length > 0 && (
+      <div>
+        <div className="seclabel" style={{ color: m.color }}>화면 구성</div>
+        <h3 className="sechead">주요 화면 · 플로우</h3>
+        <div className="feat-grid" style={{ marginTop: 12 }}>
+          {m.screens.map((s, i) => <div key={i} className="infocard"><h4 style={{ color: m.color }}>{s.name}</h4><p>{s.desc}</p></div>)}
+        </div>
+      </div>
+    )}
+
+    {m.scope && (m.scope.include.length > 0 || m.scope.exclude.length > 0) && (
+      <div>
+        <div className="seclabel" style={{ color: m.color }}>범위 설정</div>
+        <h3 className="sechead">MVP 범위 — 넣은 것 / 뺀 것</h3>
+        <div className="feat-grid" style={{ marginTop: 12 }}>
+          <div className="infocard">
+            <h4 style={{ color: m.color }}>✅ 포함 (이번 MVP)</h4>
+            <ul style={{ margin: '6px 0 0', paddingLeft: 18, fontSize: 13.5, lineHeight: 1.7 }}>{m.scope.include.map((s, i) => <li key={i}>{s}</li>)}</ul>
+          </div>
+          <div className="infocard">
+            <h4 style={{ color: 'var(--faint)' }}>⛔ 제외 (다음 단계)</h4>
+            <ul style={{ margin: '6px 0 0', paddingLeft: 18, fontSize: 13.5, lineHeight: 1.7, color: 'var(--sub)' }}>{m.scope.exclude.map((s, i) => <li key={i}>{s}</li>)}</ul>
+          </div>
+        </div>
+      </div>
+    )}
+
+    <div>
+      <div className="seclabel" style={{ color: m.color }}>주요 기능</div>
+      <h3 className="sechead">이 앱이 제공하는 것</h3>
+      <div className="feat-grid" style={{ marginTop: 12 }}>
+        {m.features.map((f, i) => <div key={i} className="feat"><div className="ic">{f.icon}</div><strong>{f.title}</strong><p>{f.desc}</p></div>)}
+      </div>
+    </div>
+
+    {m.info.length > 0 && (
+      <div>
+        <div className="seclabel" style={{ color: m.color }}>알아두면 좋은 정보</div>
+        <h3 className="sechead">도메인 가이드</h3>
+        <Stack gap={10}>{m.info.map((c, i) => <div key={i} className="infocard"><h4 style={{ color: m.color }}>{c.title}</h4><p>{c.body}</p></div>)}</Stack>
+      </div>
+    )}
+
+    <div>
+      <div className="seclabel" style={{ color: m.color }}>사용 방법</div>
+      <h3 className="sechead">시작하기</h3>
+      <div style={{ marginTop: 12 }}><NumList items={m.howto} color={m.color} /></div>
+    </div>
+  </Stack>
+);
+
+/** 🔧 파이프라인 탭 — 처리 흐름 + (AI) 프롬프트 설계 */
+export const PipelineTab = ({ m }: { m: Meta }) => {
+  const detail = m.pipelineDetail && m.pipelineDetail.length > 0 ? m.pipelineDetail : null;
+  const steps = m.pipeline && m.pipeline.length > 0 ? m.pipeline : null;
+  return (
+    <Stack gap={22}>
+      <div>
+        <div className="seclabel" style={{ color: m.color }}>동작 원리</div>
+        <h3 className="sechead">처리 파이프라인</h3>
+        {detail ? (
+          <ol className="pipeline" style={{ marginTop: 12 }}>
+            {detail.map((s, i) => (
+              <li key={i}><span className="pl-no" style={{ background: m.color }}>{i + 1}</span><span><b>{s.step}</b><span style={{ display: 'block', fontSize: 13, color: 'var(--sub)', marginTop: 3 }}>{s.detail}</span></span></li>
+            ))}
+          </ol>
+        ) : steps ? (
+          <ol className="pipeline" style={{ marginTop: 12 }}>{steps.map((s, i) => <li key={i}><span className="pl-no" style={{ background: m.color }}>{i + 1}</span><span>{s}</span></li>)}</ol>
+        ) : (
+          <div className="box" style={{ marginTop: 12 }}><p style={{ margin: 0, fontSize: 14, color: 'var(--sub)' }}>별도 서버 없이 브라우저 클라이언트에서 모든 처리가 이뤄집니다(정적 배포).</p></div>
+        )}
+      </div>
+
+      {m.promptNotes && m.promptNotes.length > 0 && (
+        <div>
+          <div className="seclabel" style={{ color: m.color }}>AI 설계</div>
+          <h3 className="sechead">프롬프트 · 응답 설계</h3>
+          <Stack gap={8}>
+            {m.promptNotes.map((s, i) => (
+              <div key={i} className="box" style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
+                <span style={{ color: m.color, fontWeight: 800 }}>›</span><span style={{ fontSize: 14, lineHeight: 1.6 }}>{s}</span>
+              </div>
+            ))}
+          </Stack>
+        </div>
+      )}
+    </Stack>
+  );
+};
+
+/** 🛠 개발 참고 탭 — 아키텍처·파일구조·데이터모델·스택·기술노트·배포·링크 */
+export const DevTab = ({ m }: { m: Meta }) => (
+  <Stack gap={22}>
+    {m.architecture && (
+      <div className="callout" style={{ background: `${m.color}12`, border: `1px solid ${m.color}33` }}>
+        <span style={{ fontSize: 22 }}>🧱</span>
+        <div><div className="seclabel" style={{ color: m.color }}>아키텍처 개요</div><p style={{ margin: '4px 0 0', fontSize: 14.5, lineHeight: 1.75 }}>{m.architecture}</p></div>
+      </div>
+    )}
+
+    {m.structure && m.structure.length > 0 && (
+      <div>
+        <div className="seclabel" style={{ color: m.color }}>파일 구조</div>
+        <h3 className="sechead">폴더 · 파일</h3>
+        <div className="box" style={{ marginTop: 12 }}>
+          <Stack gap={8}>
+            {m.structure.map((s, i) => (
+              <div key={i} style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'baseline' }}>
+                <code style={{ fontFamily: 'monospace', fontSize: 13, fontWeight: 700, color: m.color }}>{s.path}</code>
+                <span style={{ fontSize: 13.5, color: 'var(--sub)' }}>{s.desc}</span>
+              </div>
+            ))}
+          </Stack>
+        </div>
+      </div>
+    )}
+
+    {m.dataModel && m.dataModel.length > 0 && (
+      <div>
+        <div className="seclabel" style={{ color: m.color }}>데이터 모델</div>
+        <h3 className="sechead">상태 · 타입</h3>
+        <div className="feat-grid" style={{ marginTop: 12 }}>
+          {m.dataModel.map((d, i) => <div key={i} className="feat"><strong style={{ marginTop: 0 }}>🧩 {d.name}</strong><p>{d.desc}</p></div>)}
+        </div>
+      </div>
+    )}
+
+    <div>
+      <div className="seclabel" style={{ color: m.color }}>기술 스택</div>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 10 }}>{m.stack.map((s) => <Pill key={s} color={m.color}>{s}</Pill>)}</div>
+    </div>
+
+    <div>
+      <div className="seclabel" style={{ color: m.color }}>개발 가이드라인</div>
+      <h3 className="sechead">이렇게 만들고 유지합니다</h3>
+      <Stack gap={8}>
+        {[...COMMON_GUIDELINES, ...(m.guidelines || [])].map((s, i) => (
+          <div key={i} className="box" style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
+            <span style={{ color: m.color, fontWeight: 800 }}>✓</span><span style={{ fontSize: 14, lineHeight: 1.6 }}>{s}</span>
+          </div>
+        ))}
+      </Stack>
+    </div>
+
+    {m.techNotes && m.techNotes.length > 0 && (
+      <div>
+        <div className="seclabel" style={{ color: m.color }}>엔지니어링</div>
+        <h3 className="sechead">기술 설계 노트</h3>
+        <div className="feat-grid" style={{ marginTop: 12 }}>
+          {m.techNotes.map((c, i) => <div key={i} className="feat"><strong style={{ marginTop: 0 }}>🛠️ {c.title}</strong><p>{c.body}</p></div>)}
+        </div>
+      </div>
+    )}
+
+    {m.deploy && (
+      <div>
+        <div className="seclabel" style={{ color: m.color }}>빌드 · 배포</div>
+        <div className="box" style={{ marginTop: 10 }}><p style={{ margin: 0, fontSize: 14 }}>{m.deploy}</p></div>
+      </div>
+    )}
+
+    {m.links && m.links.length > 0 && (
+      <div>
+        <div className="seclabel" style={{ color: m.color }}>참고 자료</div>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 10 }}>
+          {m.links.map((l) => <a key={l.url} href={l.url} target="_blank" rel="noopener noreferrer" className="btn btn-ghost" style={{ fontSize: 13, padding: '8px 14px' }}>{l.label} ↗</a>)}
+        </div>
+      </div>
+    )}
+  </Stack>
+);
+
+/** 🎤 발표 탭 — 발표 원칙 + 데모 시연 흐름 + 핵심 강조 포인트 */
+export const PresentTab = ({ m }: { m: Meta }) => (
+  <Stack gap={22}>
+    <div>
+      <div className="seclabel" style={{ color: m.color }}>발표 기본 원칙</div>
+      <h3 className="sechead">짧고 강하게 전달하기</h3>
+      <Stack gap={8}>
+        {PRESENT_PRINCIPLES.map((s, i) => (
+          <div key={i} className="box" style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
+            <span style={{ color: m.color, fontWeight: 800 }}>{i + 1}</span><span style={{ fontSize: 14, lineHeight: 1.6 }}>{s}</span>
+          </div>
+        ))}
+      </Stack>
+    </div>
+
+    {m.scenarios && m.scenarios.length > 0 && (
+      <div>
+        <div className="seclabel" style={{ color: m.color }}>데모 시연 흐름</div>
+        <h3 className="sechead">이 순서로 보여주세요</h3>
+        <ol className="pipeline" style={{ marginTop: 12 }}>
+          {m.scenarios.map((s, i) => <li key={i}><span className="pl-no" style={{ background: m.color }}>{i + 1}</span><span>{s}</span></li>)}
+        </ol>
+      </div>
+    )}
+
+    {m.pitch && m.pitch.length > 0 && (
+      <div>
+        <div className="seclabel" style={{ color: m.color }}>핵심 강조 포인트</div>
+        <h3 className="sechead">이건 꼭 말하세요</h3>
+        <div className="feat-grid" style={{ marginTop: 12 }}>
+          {m.pitch.map((s, i) => <div key={i} className="feat"><strong style={{ marginTop: 0 }}>🎯 강조 {i + 1}</strong><p>{s}</p></div>)}
+        </div>
+      </div>
+    )}
+
+    <div className="callout" style={{ background: `${m.color}12`, border: `1px solid ${m.color}33` }}>
+      <span style={{ fontSize: 22 }}>⏱️</span>
+      <div><div className="seclabel" style={{ color: m.color }}>발표 체크</div><p style={{ margin: '4px 0 0', fontSize: 14, lineHeight: 1.7 }}>데모 환경(키·네트워크)을 미리 점검하고 핵심 화면을 즐겨찾기 해 두세요. 시간 초과 대비로 가장 강한 데모 1개를 먼저 배치합니다.</p></div>
+    </div>
+  </Stack>
+);
+
+/** 👥 팀 탭 — 멤버·스택·저장소 */
+export const TeamTab = ({ m }: { m: Meta }) => (
+  <Stack gap={22}>
+    <div>
+      <div className="seclabel" style={{ color: m.color }}>팀 멤버</div>
+      <h3 className="sechead">함께 만든 사람들</h3>
+      <div className="feat-grid" style={{ marginTop: 12 }}>
+        {m.members.map((x) => (
+          <div key={x} className="feat" style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <span style={{ width: 42, height: 42, borderRadius: '50%', background: grad(m.color), color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800, fontSize: 17 }}>{x.slice(0, 1)}</span>
+            <div><strong style={{ margin: 0 }}>{x}</strong><p style={{ margin: 0 }}>팀원</p></div>
+          </div>
+        ))}
+      </div>
+    </div>
+    <div className="box">
+      <strong>📦 프로젝트 저장소</strong>
+      <p style={{ margin: '6px 0 0', fontSize: 14 }}>
+        이 앱은 <a href={`https://github.com/aebonlee/project${String(m.id).padStart(2, '0')}`} target="_blank" rel="noopener noreferrer" style={{ color: m.color, fontWeight: 600 }}>github.com/aebonlee/project{String(m.id).padStart(2, '0')}</a> 에서 개발·자동 배포됩니다.
+      </p>
+    </div>
+  </Stack>
+);
+
+export const Footer = ({ m }: { m: Meta }) => (
+  <footer className="pfooter">AI Reboot Academy · PROJECT {String(m.id).padStart(2, '0')} — {m.title}<br />{m.members.join(' · ')} 팀 · Vite + React + TypeScript</footer>
+);
+
+export const Chip = ({ active, color = 'var(--primary)', onClick, children }: { active: boolean; color?: string; onClick: () => void; children: ReactNode }) => (
+  <button type="button" onClick={onClick} style={{
+    padding: '8px 14px', fontSize: '13.5px', fontWeight: 600, cursor: 'pointer', borderRadius: '999px',
+    border: '1px solid', borderColor: active ? color : 'var(--border)', background: active ? color : 'var(--card)', color: active ? '#fff' : 'var(--sub)',
+  }}>{children}</button>
+);
+
+export const Field = ({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) => (
+  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+    <label>{label}{hint && <span style={{ fontWeight: 400, color: 'var(--faint)', marginLeft: '6px', fontSize: '12.5px' }}>{hint}</span>}</label>
+    {children}
+  </div>
+);
+
+export const Pill = ({ color = 'var(--primary)', children }: { color?: string; children: ReactNode }) => (
+  <span style={{ fontSize: '12px', fontWeight: 800, color: '#fff', background: color, padding: '3px 11px', borderRadius: '999px', whiteSpace: 'nowrap' }}>{children}</span>
+);
+
+export const Stack = ({ gap = 18, children }: { gap?: number; children: ReactNode }) => (
+  <div style={{ display: 'flex', flexDirection: 'column', gap }}>{children}</div>
+);
+export const Row = ({ gap = 16, children }: { gap?: number; children: ReactNode }) => (
+  <div style={{ display: 'flex', gap, flexWrap: 'wrap' }}>{children}</div>
+);
+export const Box = ({ style, children }: { style?: CSSProperties; children: ReactNode }) => (
+  <div className="box" style={style}>{children}</div>
+);
+
+/** OpenAI API 키 입력/상태 바 — env 키가 있으면 자동 연결, 없으면 사용자 입력 */
+export const ApiKeyBar = ({ color }: { color: string }) => {
+  const [open, setOpen] = useState(false);
+  const [val, setVal] = useState('');
+  const [ok, setOk] = useState(hasKey());
+  const env = keyFromEnv();
+  if (env || ok) {
+    return (
+      <div className="box" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, borderColor: `${color}55`, background: `${color}10` }}>
+        <span style={{ fontSize: 13, fontWeight: 700, color }}>🤖 OpenAI 연결됨 — 실제 AI로 생성합니다{env ? ' (환경변수)' : ''}</span>
+        {!env && <button className="btn btn-ghost" style={{ padding: '6px 12px', fontSize: 12 }} onClick={() => { clearKey(); setOk(false); }}>키 변경</button>}
+      </div>
+    );
+  }
+  return (
+    <div className="box" style={{ borderColor: `${color}55` }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
+        <span style={{ fontSize: 13, fontWeight: 700 }}>🔑 OpenAI API 키를 입력하면 실제 AI가 동작합니다 <span style={{ fontWeight: 400, color: 'var(--faint)' }}>(미입력 시 오프라인 샘플)</span></span>
+        <button className="btn btn-ghost" style={{ padding: '6px 12px', fontSize: 12 }} onClick={() => setOpen((o) => !o)}>{open ? '닫기' : '키 입력'}</button>
+      </div>
+      {open && (
+        <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+          <input type="password" value={val} onChange={(e) => setVal(e.target.value)} placeholder="sk-..." style={{ flex: 1 }} />
+          <button className="btn" style={{ background: color }} onClick={() => { if (val.trim()) { setKey(val.trim()); setOk(true); } }}>저장</button>
+        </div>
+      )}
+      <p style={{ margin: '8px 0 0', fontSize: 11.5, color: 'var(--faint)' }}>키는 브라우저에만 저장되며 서버로 전송되지 않습니다.</p>
+    </div>
+  );
+};
+
+/** 앱 공통 레이아웃: 히어로 + 6탭 + 본문 + 푸터 (스티키 탭·전환 페이드·맨 위로·키보드 ←/→) */
+export const AppLayout = ({ m, feature }: { m: Meta; feature: ReactNode }) => {
+  const [tab, setTab] = useState<TabKey>('app');
+  const [showTop, setShowTop] = useState(false);
+
+  // 스크롤하면 '맨 위로' 버튼 노출
+  useEffect(() => {
+    const onScroll = () => setShowTop(window.scrollY > 360);
+    window.addEventListener('scroll', onScroll, { passive: true });
+    return () => window.removeEventListener('scroll', onScroll);
+  }, []);
+
+  // ←/→ 키로 탭 이동(입력 중에는 무시)
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const el = e.target as HTMLElement | null;
+      if (el && /INPUT|TEXTAREA|SELECT/.test(el.tagName)) return;
+      if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+      const i = TAB_ORDER.indexOf(tab);
+      setTab(TAB_ORDER[(i + (e.key === 'ArrowRight' ? 1 : TAB_ORDER.length - 1)) % TAB_ORDER.length]);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [tab]);
+
+  const go = (t: TabKey) => { setTab(t); if (window.scrollY > 220) window.scrollTo({ top: 0, behavior: 'smooth' }); };
+
+  return (
+    <div className="wrap">
+      <style>{UI_BOOST_CSS}</style>
+      <Hero m={m} />
+      <div className="ui-stick"><Tabs tab={tab} set={go} color={m.color} /></div>
+      <div className="pad" style={{ marginTop: 22 }}>
+        <div key={tab} className="ui-fade">
+          {tab === 'app'
+            ? <Stack>{m.ai && <ApiKeyBar color={m.color} />}{feature}</Stack>
+            : (
+              <div className="ui-readable">
+                {tab === 'plan' && <PlanningTab m={m} />}
+                {tab === 'pipeline' && <PipelineTab m={m} />}
+                {tab === 'dev' && <DevTab m={m} />}
+                {tab === 'present' && <PresentTab m={m} />}
+                {tab === 'team' && <TeamTab m={m} />}
+              </div>
+            )}
+        </div>
+      </div>
+      <Footer m={m} />
+      {showTop && <button className="ui-top" style={{ background: m.color }} aria-label="맨 위로" onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}>↑</button>}
+    </div>
+  );
+};
