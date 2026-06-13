@@ -407,8 +407,8 @@ export const TeamTab = ({ m }: { m: Meta }) => (
   </Stack>
 );
 
-export const Footer = ({ m }: { m: Meta }) => (
-  <footer className="pfooter">AI Reboot Academy · PROJECT {String(m.id).padStart(2, '0')} — {m.title}<br />{m.members.join(' · ')} 팀 · Vite + React + TypeScript</footer>
+export const Footer = () => (
+  <footer className="pfooter">AI Storybook Creation Service<br />동네아는형</footer>
 );
 
 export const Chip = ({ active, color = 'var(--primary)', onClick, children }: { active: boolean; color?: string; onClick: () => void; children: ReactNode }) => (
@@ -517,7 +517,7 @@ export const AppLayout = ({ m, feature }: { m: Meta; feature: ReactNode }) => {
             )}
         </div>
       </div>
-      <Footer m={m} />
+      <Footer />
       {showTop && <button className="ui-top" style={{ background: m.color }} aria-label="맨 위로" onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}>↑</button>}
     </div>
   );
