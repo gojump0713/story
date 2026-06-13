@@ -94,20 +94,9 @@ function shade(hex: string, p: number): string {
 export const Hero = ({ m }: { m: Meta }) => (
   <header className="phero" style={{ background: grad(m.color) }}>
     <div className="phero-inner">
-      <span className="phero-tag">PROJECT {String(m.id).padStart(2, '0')}{m.note ? ` · ${m.note}` : ''}</span>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 10 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
         <span className="phero-ic">{m.icon}</span>
         <h1 style={{ margin: 0 }}>{m.title}</h1>
-      </div>
-      <p style={{ marginTop: 8 }}>{m.tagline}</p>
-      <div className="phero-mem">{m.members.map((x) => <span key={x}>👤 {x}</span>)}</div>
-      {/* 한눈에 — 메타 요약 칩 */}
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 12 }}>
-        <span className="ui-chip">👥 팀원 {m.members.length}</span>
-        <span className="ui-chip">🧰 스택 {m.stack.length}</span>
-        {m.ai && <span className="ui-chip">🤖 AI 연동</span>}
-        <span className="ui-chip">💾 로컬 저장</span>
-        <span className="ui-chip">🚀 자동 배포</span>
       </div>
     </div>
   </header>
