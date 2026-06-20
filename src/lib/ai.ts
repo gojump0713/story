@@ -43,6 +43,57 @@ export const ask = (system: string, user: string, opts?: { temperature?: number;
   chat([{ role: 'system', content: system }, { role: 'user', content: user }], opts);
 
 /**
+ * 스트리밍 채팅 — 토큰이 도착할 때마다 onToken으로 흘려보낸다(챗봇 타이핑 효과).
+ * 전체 응답 텍스트를 반환. 키 없거나 실패 시 throw. signal로 중단 가능.
+ */
+export async function chatStream(
+  messages: Msg[],
+  onToken: (delta: string) => void,
+  opts: { temperature?: number; max_tokens?: number; signal?: AbortSignal } = {},
+): Promise<string> {
+  const key = getKey();
+  if (!key) throw new Error('NO_KEY');
+  const res = await fetch('https://api.openai.com/v1/chat/completions', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
+    signal: opts.signal,
+    body: JSON.stringify({
+      model: MODEL,
+      temperature: opts.temperature ?? 0.8,
+      max_tokens: opts.max_tokens ?? 900,
+      stream: true,
+      messages,
+    }),
+  });
+  if (!res.ok || !res.body) {
+    const t = await res.text().catch(() => '');
+    throw new Error(`OpenAI ${res.status}: ${t.slice(0, 120)}`);
+  }
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let full = '';
+  let buf = '';
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, { stream: true });
+    const lines = buf.split('\n');
+    buf = lines.pop() ?? ''; // 마지막 불완전한 줄은 다음 청크로 이월
+    for (const line of lines) {
+      const s = line.trim();
+      if (!s.startsWith('data:')) continue;
+      const payload = s.slice(5).trim();
+      if (payload === '[DONE]') return full;
+      try {
+        const delta = JSON.parse(payload).choices?.[0]?.delta?.content;
+        if (delta) { full += delta; onToken(delta); }
+      } catch { /* keep-alive 등 비JSON 줄 무시 */ }
+    }
+  }
+  return full;
+}
+
+/**
  * 동화 장면 삽화 생성.
  * 기본은 최신 이미지 모델 `gpt-image-1`을 쓰고, 계정에 없으면 `dall-e-3`로 폴백한다.
  * (계정마다 사용 가능한 모델이 달라, 둘 다 시도해 가장 먼저 성공하는 모델을 쓴다.)
