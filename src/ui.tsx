@@ -482,7 +482,7 @@ export const AppLayout = ({ m, feature }: { m: Meta; feature: ReactNode }) => {
       <div className="pad" style={{ marginTop: 22 }}>
         <div key={nav} className="ui-fade">
           {nav === 'app' && <Stack>{m.ai && <ApiKeyBar color={m.color} />}{feature}</Stack>}
-          {nav === 'chat' && <div className="ui-readable"><Stack>{m.ai && <ApiKeyBar color={m.color} />}<Chatbot color={m.color} /></Stack></div>}
+          {nav === 'chat' && <div className="ui-readable"><Chatbot color={m.color} /></div>}
           {nav === 'board' && <div className="ui-readable"><Board color={m.color} /></div>}
         </div>
       </div>

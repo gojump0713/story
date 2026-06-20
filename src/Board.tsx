@@ -16,7 +16,7 @@ function fmt(iso: string): string {
 }
 
 /** 로그인 / 회원가입 폼 */
-function AuthPanel({ color }: { color: string }) {
+export function AuthPanel({ color }: { color: string }) {
   const [mode, setMode] = useState<'in' | 'up'>('in');
   const [email, setEmail] = useState('');
   const [pw, setPw] = useState('');

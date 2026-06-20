@@ -1,0 +1,4 @@
+# Supabase 로컬 작업 파일 — 비밀키·임시 파일은 커밋 금지
+.branches
+.temp
+.env

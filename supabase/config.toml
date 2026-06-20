@@ -1,0 +1,5 @@
+project_id = "mogxucueizvnoggfurmv"
+
+[functions.chat]
+# 로그인 사용자의 JWT를 요구한다. 함수 내부에서 추가로 authenticated 역할인지 검사한다.
+verify_jwt = true

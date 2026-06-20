@@ -1,11 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import { Stack } from './ui';
-import { chatStream, hasKey, type Msg } from './lib/ai';
+import { AuthPanel } from './Board';
+import { authEnabled, useAuth, signOut, displayName } from './lib/auth';
+import { solarStream, type ChatTurn } from './lib/solar';
 
 /* ──────────────────────────────────────────────────────────────────────────
- * 동화 도우미 챗봇 — 부모·아이를 위한 친절한 한국어 AI 도우미.
- * OpenAI 키가 있으면 실시간 스트리밍 대화, 없으면 안내 폴백.
- * 대화는 localStorage에 저장해 새로고침해도 이어진다.
+ * 동화 도우미 챗봇 — Upstage Solar 기반 친절한 한국어 도우미.
+ * 키는 Supabase Edge Function('chat')에 보관되고, 여기서는 로그인 사용자의
+ * 토큰만 보낸다(키 노출 없음). 대화는 localStorage에 저장해 새로고침해도 이어진다.
  * ────────────────────────────────────────────────────────────────────────── */
 
 const LS = 'chatbot.history.v1';
@@ -36,20 +38,17 @@ function loadHistory(): ChatMsg[] {
   return [{ role: 'assistant', content: GREETING }];
 }
 
-export default function Chatbot({ color }: { color: string }) {
+/** 실제 대화 화면 (로그인 후) */
+function ChatRoom({ color }: { color: string }) {
   const [msgs, setMsgs] = useState<ChatMsg[]>(loadHistory);
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
-  const ai = hasKey();
 
-  // 대화 저장
   useEffect(() => { try { localStorage.setItem(LS, JSON.stringify(msgs.slice(-40))); } catch { /* ignore */ } }, [msgs]);
-  // 새 메시지마다 맨 아래로
   useEffect(() => { scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' }); }, [msgs, busy]);
-  // 언마운트 시 진행 중 스트림 중단
   useEffect(() => () => abortRef.current?.abort(), []);
 
   const send = async (text: string) => {
@@ -58,26 +57,18 @@ export default function Chatbot({ color }: { color: string }) {
     setErr(null);
     setInput('');
 
-    if (!ai) {
-      setMsgs((m) => [...m, { role: 'user', content }, {
-        role: 'assistant',
-        content: '실시간 대화를 하려면 위쪽 “🔑 OpenAI 키” 칸에 키를 입력해 주세요. 키를 넣으면 제가 바로 도와드릴 수 있어요! 🙂',
-      }]);
-      return;
-    }
-
     const history = [...msgs, { role: 'user' as const, content }];
     setMsgs([...history, { role: 'assistant', content: '' }]);
     setBusy(true);
 
     const ctrl = new AbortController();
     abortRef.current = ctrl;
-    const payload: Msg[] = [
+    const payload: ChatTurn[] = [
       { role: 'system', content: SYSTEM },
       ...history.slice(-12).map((m) => ({ role: m.role, content: m.content })),
     ];
     try {
-      await chatStream(payload, (delta) => {
+      await solarStream(payload, (delta) => {
         setMsgs((m) => {
           const next = [...m];
           next[next.length - 1] = { role: 'assistant', content: next[next.length - 1].content + delta };
@@ -89,7 +80,6 @@ export default function Chatbot({ color }: { color: string }) {
         setErr(e instanceof Error ? e.message : '응답을 받지 못했어요.');
         setMsgs((m) => {
           const next = [...m];
-          // 비어 있는 자리표시 응답 제거
           if (next[next.length - 1]?.role === 'assistant' && !next[next.length - 1].content) next.pop();
           return next;
         });
@@ -107,17 +97,7 @@ export default function Chatbot({ color }: { color: string }) {
   };
 
   return (
-    <Stack gap={12}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
-        <h3 style={{ margin: 0 }}>🤖 동화 도우미 챗봇</h3>
-        <button className="btn btn-ghost" style={{ padding: '6px 12px', fontSize: 12 }} onClick={reset}>🗑 대화 비우기</button>
-      </div>
-      {!ai && (
-        <div className="box" style={{ fontSize: 13, lineHeight: 1.7, color: 'var(--sub)' }}>
-          💡 위쪽 <b>🔑 OpenAI 키</b>를 입력하면 실시간 대화가 켜집니다. (키는 브라우저에만 저장돼요)
-        </div>
-      )}
-
+    <>
       <div className="cb-window" ref={scrollRef}>
         {msgs.map((m, i) => (
           <div key={i} className={`cb-row ${m.role}`}>
@@ -151,6 +131,64 @@ export default function Chatbot({ color }: { color: string }) {
           ? <button className="btn btn-ghost" style={{ padding: '0 16px' }} onClick={stop}>■ 멈춤</button>
           : <button className="btn" style={{ background: color, padding: '0 18px' }} disabled={!input.trim()} onClick={() => send(input)}>보내기</button>}
       </div>
+      <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+        <button className="btn btn-ghost" style={{ padding: '6px 12px', fontSize: 12 }} onClick={reset}>🗑 대화 비우기</button>
+      </div>
+    </>
+  );
+}
+
+/** 챗봇 탭 진입점 — Supabase 미설정/비로그인/로그인 상태로 분기 */
+export default function Chatbot({ color }: { color: string }) {
+  const { user, loading } = useAuth();
+
+  const header = (
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
+      <h3 style={{ margin: 0 }}>🤖 동화 도우미 챗봇</h3>
+      {user && (
+        <button className="btn btn-ghost" style={{ padding: '6px 12px', fontSize: 12 }} onClick={() => signOut()}>로그아웃</button>
+      )}
+    </div>
+  );
+
+  if (!authEnabled) {
+    return (
+      <Stack gap={12}>
+        {header}
+        <div className="card" style={{ maxWidth: 520, margin: '0 auto' }}>
+          <h3 style={{ marginTop: 0 }}>⚙️ Supabase 설정이 필요해요</h3>
+          <p style={{ fontSize: 14, lineHeight: 1.7, color: 'var(--sub)' }}>
+            챗봇은 Upstage Solar를 Supabase Edge Function으로 안전하게 중계합니다.
+            <code> .env</code>에 <code>VITE_SUPABASE_URL</code>, <code>VITE_SUPABASE_ANON_KEY</code>를 채우고
+            <code> chat</code> 함수를 배포한 뒤 사용할 수 있어요.
+          </p>
+        </div>
+      </Stack>
+    );
+  }
+
+  if (loading) return <Stack gap={12}>{header}<p style={{ color: 'var(--faint)', textAlign: 'center' }}>불러오는 중…</p></Stack>;
+
+  if (!user) {
+    return (
+      <Stack gap={16}>
+        {header}
+        <div style={{ textAlign: 'center' }}>
+          <h3 style={{ margin: '0 0 6px' }}>🔐 로그인하고 챗봇과 대화하세요</h3>
+          <p style={{ fontSize: 13.5, color: 'var(--faint)', margin: 0 }}>이메일·비밀번호로 로그인하면 동화 도우미와 이야기할 수 있어요.</p>
+        </div>
+        <AuthPanel color={color} />
+      </Stack>
+    );
+  }
+
+  return (
+    <Stack gap={12}>
+      {header}
+      <div className="box" style={{ fontSize: 13, color: color, borderColor: `${color}55`, background: `${color}10` }}>
+        👤 {displayName(user)} 님 · Upstage Solar로 답해드려요 ✨
+      </div>
+      <ChatRoom color={color} />
     </Stack>
   );
 }
